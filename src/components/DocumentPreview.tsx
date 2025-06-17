@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, forwardRef, useImperativeHandle, useRef } from 'react';
 import PDFWrapper from './PDFWrapper';
 
 interface Customer {
@@ -56,16 +56,28 @@ interface DocumentPreviewProps {
   inline?: boolean; // New prop for inline mode
 }
 
-export default function DocumentPreview({ documentData, isOpen, onClose, inline = false }: DocumentPreviewProps) {
-  const [isClient, setIsClient] = useState(false);
+export interface DocumentPreviewRef {
+  downloadPDF: () => void;
+}
 
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+const DocumentPreview = forwardRef<DocumentPreviewRef, DocumentPreviewProps>(
+  function DocumentPreview({ documentData, isOpen, onClose, inline = false }, ref) {
+    const [isClient, setIsClient] = useState(false);
+    const pdfWrapperRef = useRef<{ downloadPDF: () => void }>(null);
 
-  if (!isOpen || !isClient) return null;
+    useEffect(() => {
+      setIsClient(true);
+    }, []);
 
-  const fileName = `${documentData.case_type}_${documentData.document_number || 'preview'}.pdf`;
+    useImperativeHandle(ref, () => ({
+      downloadPDF: () => {
+        pdfWrapperRef.current?.downloadPDF();
+      }
+    }));
+
+    if (!isOpen || !isClient) return null;
+
+    const fileName = `${documentData.case_type}_${documentData.document_number || 'preview'}.pdf`;
   
   if (inline) {
     // Inline mode - no modal overlay, fits within container
@@ -73,7 +85,7 @@ export default function DocumentPreview({ documentData, isOpen, onClose, inline 
       <div className="h-full flex flex-col bg-white dark:bg-gray-800">
         {/* PDF Viewer */}
         <div className="flex-1 bg-gray-100 dark:bg-gray-900">
-          <PDFWrapper documentData={documentData} fileName={fileName} isPreview={inline} />
+          <PDFWrapper documentData={documentData} fileName={fileName} isPreview={inline} ref={pdfWrapperRef} />
         </div>
       </div>
     );
@@ -112,7 +124,7 @@ export default function DocumentPreview({ documentData, isOpen, onClose, inline 
           
           {/* PDF Viewer */}
           <div className="flex-1 bg-gray-100 dark:bg-gray-900">
-            <PDFWrapper documentData={documentData} fileName={fileName} isPreview={false} />
+            <PDFWrapper documentData={documentData} fileName={fileName} isPreview={false} ref={pdfWrapperRef} />
           </div>
           
           {/* Footer */}
@@ -132,4 +144,7 @@ export default function DocumentPreview({ documentData, isOpen, onClose, inline 
       </div>
     </div>
   );
-} 
+  }
+);
+
+export default DocumentPreview; 

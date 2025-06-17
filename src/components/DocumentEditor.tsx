@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase, caseOperations, caseItemOperations, Database } from '@/lib/supabase';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
-import DocumentPreview from '@/components/DocumentPreview';
+import DocumentPreview, { DocumentPreviewRef } from '@/components/DocumentPreview';
 
 interface Customer {
   id: string;
@@ -36,6 +36,17 @@ interface CaseItem {
   unit: string;
   discount_percentage: number;
   line_total: number;
+}
+
+interface EmailHistoryItem {
+  id: string;
+  case_id: string;
+  recipient_email: string;
+  subject: string;
+  email_content?: string;
+  status: 'sent' | 'failed' | 'pending';
+  sent_at: string;
+  attachment_filename?: string;
 }
 
 interface Case {
@@ -102,6 +113,7 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const isEditMode = !!caseId;
+  const documentPreviewRef = useRef<DocumentPreviewRef>(null);
   
   const [currentCase, setCurrentCase] = useState<Case | null>(null);
   const [caseLoading, setCaseLoading] = useState(isEditMode);
@@ -124,6 +136,13 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
     { description: '', quantity: 1, unit_price: 0, unit: 'pcs', discount_percentage: 0, line_total: 0 }
   ]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [emailHistory, setEmailHistory] = useState<EmailHistoryItem[]>([]);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailForm, setEmailForm] = useState({
+    recipientEmail: '',
+    customMessage: ''
+  });
 
   // Form data
   const [formData, setFormData] = useState({
@@ -159,12 +178,15 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
       fetchCompanyData();
       if (isEditMode && caseId) {
         fetchCase();
+        fetchEmailHistory();
       } else {
         setCaseLoading(false);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, caseId, isEditMode]);
+
+
 
   const fetchCase = async () => {
     if (!caseId || !user) return;
@@ -314,6 +336,131 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
       });
     } catch (error) {
       console.error('Error fetching company data:', error);
+    }
+  };
+
+  const fetchEmailHistory = async () => {
+    if (!user || !isEditMode || !caseId) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('email_history')
+        .select('*')
+        .eq('case_id', caseId)
+        .order('sent_at', { ascending: false });
+      
+      if (!error && data) {
+        setEmailHistory(data);
+      }
+    } catch (error) {
+      console.error('Error fetching email history:', error);
+    }
+  };
+
+  const sendEmail = async () => {
+    if (!user || !emailForm.recipientEmail) return;
+    
+    setEmailSending(true);
+    try {
+      let targetCaseId = isEditMode ? caseId : currentCase?.id;
+      
+      // If we're in create mode and no case exists yet, we need to save first
+      if (!isEditMode && !currentCase) {
+        if (!validateForm()) {
+          setEmailSending(false);
+          return;
+        }
+        
+        // Save the case first
+        const totals = calculateTotals();
+        const caseData: Database['public']['Tables']['cases']['Insert'] = {
+          title: formData.title,
+          description: formData.description || undefined,
+          case_type: formData.case_type,
+          project_id: formData.project_id || undefined,
+          customer_id: formData.customer_id || undefined,
+          service_address: formData.service_address || undefined,
+          priority: formData.priority,
+          due_date: formData.due_date || undefined,
+          estimated_duration: formData.estimated_duration ? parseInt(formData.estimated_duration) : undefined,
+          amount: totals.subtotal,
+          vat_rate: formData.vat_rate,
+          currency: formData.currency,
+          payment_terms: formData.payment_terms,
+          valid_until: formData.valid_until || undefined,
+          user_id: user.id
+        };
+
+        const { data: createdCase, error, success } = await caseOperations.createCase(caseData);
+
+        if (!success || error || !createdCase) {
+          console.error('Error creating case:', error);
+          alert(`Error creating document: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          setEmailSending(false);
+          return;
+        }
+
+        const caseWithId = createdCase as { id: string };
+        targetCaseId = caseWithId.id;
+
+        // Create line items
+        const validItems = items.filter(item => item.description.trim() && item.quantity > 0);
+        if (validItems.length > 0) {
+          const itemPromises = validItems.map((item, index) => 
+            caseItemOperations.addCaseItem({
+              case_id: caseWithId.id,
+              description: item.description,
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              unit: item.unit,
+              discount_percentage: item.discount_percentage,
+              sort_order: index
+            })
+          );
+
+          await Promise.all(itemPromises);
+        }
+
+        // Update current case state
+        setCurrentCase(createdCase as Case);
+      }
+      
+      const authHeader = `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`;
+      
+      const response = await fetch('/api/send-case-document', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authHeader,
+        },
+        body: JSON.stringify({
+          caseId: targetCaseId,
+          recipientEmail: emailForm.recipientEmail,
+          customMessage: emailForm.customMessage,
+          userId: user.id,
+        }),
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        alert(`${formData.case_type === 'offer' ? 'Offer' : 'Invoice'} sent successfully!`);
+        setShowEmailModal(false);
+        setEmailForm({ recipientEmail: '', customMessage: '' });
+        
+        // Refresh email history
+        fetchEmailHistory();
+        
+        // Update form status to sent
+        setFormData(prev => ({ ...prev, status: 'sent' as const }));
+      } else {
+        alert(`Failed to send email: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error sending email:', error);
+      alert('Failed to send email. Please try again.');
+    } finally {
+      setEmailSending(false);
     }
   };
 
@@ -500,6 +647,9 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
         }
 
         alert('Document created successfully!');
+        
+        // Update current case state for email functionality
+        setCurrentCase(createdCase as Case);
       }
 
       router.push('/cases');
@@ -554,10 +704,10 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
       <div className="flex-1 flex flex-col">
         <Header user={user} />
         
-        <main className="flex-1 pt-20 ml-64">
-          <div className="h-full flex">
+        <main className="flex-1 pt-20 ml-64 pr-[45%]">
+          <div className="h-full">
             {/* Left Panel - Form */}
-            <div className="w-[55%] p-4 overflow-y-auto">
+            <div className="w-full p-4 overflow-y-auto max-h-[calc(100vh-5rem)]">
               <div className="max-w-4xl mx-auto space-y-4">
                 {/* Header */}
                 <div className="relative">
@@ -873,100 +1023,106 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
                       </button>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {items.map((item, index) => (
-                        <div key={index} className="grid grid-cols-8 gap-3 items-end p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
-                          <div className="col-span-2">
-                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                              Description
-                            </label>
-                            <input
-                              type="text"
-                              value={item.description}
-                              onChange={(e) => updateItem(index, 'description', e.target.value)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                              placeholder="Item description"
-                            />
-                          </div>
-                          
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                              Qty
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={item.quantity}
-                              onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                            />
-                          </div>
-                          
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                              Unit
-                            </label>
-                            <select
-                              value={item.unit}
-                              onChange={(e) => updateItem(index, 'unit', e.target.value)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                            >
-                              {unitOptions.map((unit) => (
-                                <option key={unit.value} value={unit.value}>
-                                  {unit.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                              Price
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={item.unit_price}
-                              onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                            />
-                          </div>
-                          
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                              Disc %
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="0.1"
-                              value={item.discount_percentage}
-                              onChange={(e) => updateItem(index, 'discount_percentage', parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                            />
-                          </div>
-                          
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                              Total
-                            </label>
-                            <div className="px-2 py-1 text-sm bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white">
-                              {calculateItemTotal(item).toFixed(2)}
+                        <div key={index} className="bg-gray-50/50 dark:bg-gray-700/30 border border-gray-200 dark:border-gray-600 rounded-xl p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                          {/* Header row with description and remove button */}
+                          <div className="flex items-start justify-between gap-3 mb-3">
+                            <div className="flex-1">
+                              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Description
+                              </label>
+                              <input
+                                type="text"
+                                value={item.description}
+                                onChange={(e) => updateItem(index, 'description', e.target.value)}
+                                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white transition-all"
+                                placeholder="Enter item description..."
+                              />
                             </div>
-                          </div>
-                          
-                          <div>
                             <button
                               type="button"
                               onClick={() => removeItem(index)}
                               disabled={items.length === 1}
-                              className="w-full px-2 py-1 text-sm bg-red-600 hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded transition-colors"
+                              className="mt-5 p-2 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:text-gray-400 disabled:cursor-not-allowed rounded-lg transition-all"
+                              title="Remove item"
                             >
-                              Remove
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
                             </button>
+                          </div>
+                          
+                          {/* Compact grid for numerical values */}
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Qty
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.quantity}
+                                onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value) || 0)}
+                                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                              />
+                            </div>
+                            
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Unit
+                              </label>
+                              <select
+                                value={item.unit}
+                                onChange={(e) => updateItem(index, 'unit', e.target.value)}
+                                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                              >
+                                {unitOptions.map((unit) => (
+                                  <option key={unit.value} value={unit.value}>
+                                    {unit.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Price
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.unit_price}
+                                onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value) || 0)}
+                                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                              />
+                            </div>
+                            
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Disc %
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.1"
+                                value={item.discount_percentage}
+                                onChange={(e) => updateItem(index, 'discount_percentage', parseFloat(e.target.value) || 0)}
+                                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                              />
+                            </div>
+                            
+                            <div className="col-span-2 md:col-span-1">
+                              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Total
+                              </label>
+                              <div className="w-full px-3 py-2 text-sm bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border border-green-200 dark:border-green-700 rounded-lg text-gray-900 dark:text-white font-semibold">
+                                {calculateItemTotal(item).toFixed(2)} {formData.currency}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -999,6 +1155,91 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
                     </div>
                   </div>
 
+                  {/* Email History Section */}
+                  {isEditMode && (
+                    <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl rounded-2xl p-6 border border-white/20 dark:border-gray-700/20 shadow-lg">
+                      <div className="flex items-center space-x-2 mb-6">
+                        <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-lg flex items-center justify-center">
+                          <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                          </svg>
+                        </div>
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white">Email History</h3>
+                        {emailHistory.length > 0 && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300">
+                            {emailHistory.length} email{emailHistory.length !== 1 ? 's' : ''} sent
+                          </span>
+                        )}
+                      </div>
+
+                      {emailHistory.length > 0 ? (
+                        <div className="space-y-3">
+                          {emailHistory.map((email) => (
+                            <div key={email.id} className="bg-gray-50/50 dark:bg-gray-700/30 border border-gray-200 dark:border-gray-600 rounded-xl p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <div className="flex items-center space-x-3 mb-2">
+                                    <div className="flex items-center space-x-2">
+                                      <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+                                      </svg>
+                                      <span className="font-medium text-gray-900 dark:text-white">{email.recipient_email}</span>
+                                    </div>
+                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                      email.status === 'sent' 
+                                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                                        : email.status === 'failed'
+                                        ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                                        : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
+                                    }`}>
+                                      {email.status}
+                                    </span>
+                                  </div>
+                                  <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                                    <strong>Subject:</strong> {email.subject}
+                                  </div>
+                                  {email.email_content && (
+                                    <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                                      <strong>Message:</strong> {email.email_content.length > 100 
+                                        ? email.email_content.substring(0, 100) + '...' 
+                                        : email.email_content}
+                                    </div>
+                                  )}
+                                  <div className="flex items-center space-x-4 text-xs text-gray-500 dark:text-gray-500">
+                                    <div className="flex items-center space-x-1">
+                                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                      </svg>
+                                      <span>{new Date(email.sent_at).toLocaleDateString()} at {new Date(email.sent_at).toLocaleTimeString()}</span>
+                                    </div>
+                                    {email.attachment_filename && (
+                                      <div className="flex items-center space-x-1">
+                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                                        </svg>
+                                        <span>{email.attachment_filename}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-8">
+                          <div className="w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg className="w-8 h-8 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            </svg>
+                          </div>
+                          <p className="text-gray-500 dark:text-gray-400 font-medium">No emails sent yet</p>
+                          <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">Email history will appear here after you send this document</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Submit Button */}
                   <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl rounded-2xl p-6 border border-white/20 dark:border-gray-700/20 shadow-lg">
                     <div className="flex justify-between items-center">
@@ -1029,28 +1270,68 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
             </div>
 
             {/* Right Panel - Live PDF Preview */}
-            <div className="w-[45%] bg-gray-50/50 dark:bg-gray-900/50 border-l border-gray-200/50 dark:border-gray-700/50">
+            <div className="fixed top-20 right-0 w-[45%] h-[calc(100vh-5rem)] bg-gray-50/50 dark:bg-gray-900/50 border-l border-gray-200/50 dark:border-gray-700/50 z-10">
               <div className="h-full flex flex-col">
                 <div className="p-4 border-b border-gray-200/50 dark:border-gray-700/50 bg-white/60 dark:bg-gray-800/60 backdrop-blur-lg">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg flex items-center justify-center">
+                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white">Live Preview</h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          {canShowPreview ? 'Preview updates as you edit' : 'Fill in title and customer to see preview'}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-gray-900 dark:text-white">Live Preview</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {canShowPreview ? 'Preview updates as you edit' : 'Fill in title and customer to see preview'}
-                      </p>
-                    </div>
+                    
+                    {/* Download and Email Buttons */}
+                    {canShowPreview && (
+                      <div className="flex space-x-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            documentPreviewRef.current?.downloadPDF();
+                          }}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center space-x-2 shadow-lg hover:shadow-xl"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          <span>Download PDF</span>
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Pre-fill with customer email if available
+                            const selectedCustomer = customers.find(c => c.id === formData.customer_id);
+                            setEmailForm({
+                              recipientEmail: selectedCustomer?.email || '',
+                              customMessage: ''
+                            });
+                            setShowEmailModal(true);
+                          }}
+                          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center space-x-2 shadow-lg hover:shadow-xl"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                          </svg>
+                          <span>Send Email</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
                 
                 <div className="flex-1 bg-gray-100 dark:bg-gray-900">
                   {canShowPreview ? (
                     <DocumentPreview
+                      ref={documentPreviewRef}
                       isOpen={true}
                       onClose={() => {}} // No close button in live preview
                       documentData={previewData}
@@ -1073,6 +1354,96 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
           </div>
         </main>
       </div>
+
+      {/* Email Modal */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-[99999] overflow-y-auto" style={{ zIndex: 99999 }}>
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center">
+            {/* Backdrop */}
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" 
+              onClick={() => setShowEmailModal(false)}
+              style={{ zIndex: 99998 }}
+            ></div>
+
+            {/* Modal content */}
+            <div 
+              className="relative inline-block bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all max-w-lg w-full mx-4"
+              style={{ zIndex: 99999 }}
+            >
+              <div className="bg-white dark:bg-gray-800 px-6 pt-6 pb-4">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-green-100 dark:bg-green-900">
+                    <svg className="h-6 w-6 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div className="ml-4 w-full">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900 dark:text-white mb-4">
+                      Send {formData.case_type === 'offer' ? 'Offer' : 'Invoice'} via Email
+                    </h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Recipient Email *
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          value={emailForm.recipientEmail}
+                          onChange={(e) => setEmailForm(prev => ({ ...prev, recipientEmail: e.target.value }))}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 dark:bg-gray-700 dark:text-white"
+                          placeholder="customer@example.com"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Custom Message (optional)
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={emailForm.customMessage}
+                          onChange={(e) => setEmailForm(prev => ({ ...prev, customMessage: e.target.value }))}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 dark:bg-gray-700 dark:text-white"
+                          placeholder="Add a personal message to include in the email..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-gray-50 dark:bg-gray-700 px-6 py-4 flex flex-row-reverse gap-3">
+                <button
+                  type="button"
+                  onClick={sendEmail}
+                  disabled={emailSending || !emailForm.recipientEmail}
+                  className="inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 text-sm disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {emailSending ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Sending...
+                    </>
+                  ) : (
+                    'Send Email'
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEmailModal(false)}
+                  disabled={emailSending}
+                  className="inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-gray-800 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+
     </div>
   );
 } 

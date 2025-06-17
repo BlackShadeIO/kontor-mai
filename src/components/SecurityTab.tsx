@@ -85,6 +85,7 @@ export default function SecurityTab({ user, onMessage }: SecurityTabProps) {
     if (user && user.id) {
       loadSessions();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const loadSessions = async () => {

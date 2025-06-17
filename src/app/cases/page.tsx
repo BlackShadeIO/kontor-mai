@@ -1,31 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase, caseOperations, Database } from '@/lib/supabase';
+import { caseOperations, Database } from '@/lib/supabase';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
 
-interface Customer {
-  id: string;
-  first_name: string;
-  last_name: string;
-  email?: string;
-  phone?: string;
-  company_name?: string;
-  street_address: string;
-  city: string;
-  postal_code: string;
-  country: string;
-}
-
-interface Project {
-  id: string;
-  name: string;
-  description?: string;
-  status: string;
-}
+// Removed unused interfaces - Customer and Project are not used in this component
 
 interface Case {
   id: string;
@@ -133,7 +115,7 @@ export default function CasesPage() {
   //   }
   // };
 
-  const fetchCases = async () => {
+  const fetchCases = useCallback(async () => {
     if (!user) return;
     
     const { data, error, success } = await caseOperations.getAllCases(user.id);
@@ -144,9 +126,9 @@ export default function CasesPage() {
       setCases(data || []);
     }
     setIsLoading(false);
-  };
+  }, [user]);
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     if (!user) return;
     
     const { data, success } = await caseOperations.getCaseAnalytics(user.id);
@@ -154,7 +136,7 @@ export default function CasesPage() {
     if (success && data) {
       setAnalytics(data);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -163,7 +145,7 @@ export default function CasesPage() {
       fetchCases();
       fetchAnalytics();
     }
-  }, [user]);
+  }, [user, fetchCases, fetchAnalytics]);
 
   const updateCaseStatus = async (caseId: string, status: string) => {
     const { error, success } = await caseOperations.updateCaseStatus(

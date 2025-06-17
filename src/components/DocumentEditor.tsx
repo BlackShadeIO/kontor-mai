@@ -469,7 +469,7 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
 
         if (!success || error || !createdCase) {
           console.error('Error creating case:', error);
-          alert(`Error creating document: ${(error as any)?.message || 'Unknown error'}`);
+          alert(`Error creating document: ${error instanceof Error ? error.message : 'Unknown error'}`);
           return;
         }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
@@ -114,7 +114,7 @@ export default function CustomersPage() {
     }
   }, [user, loading, router]);
 
-  const fetchCustomers = async () => {
+  const fetchCustomers = useCallback(async () => {
     if (!user) return;
     
     const { data, error } = await supabase
@@ -129,13 +129,13 @@ export default function CustomersPage() {
       setCustomers(data || []);
     }
     setIsLoading(false);
-  };
+  }, [user]);
 
   useEffect(() => {
     if (user) {
       fetchCustomers();
     }
-  }, [user]);
+  }, [user, fetchCustomers]);
 
   const createCustomer = async () => {
     if (!user || !newCustomer.first_name || !newCustomer.last_name || !newCustomer.street_address) return;
@@ -148,6 +148,7 @@ export default function CustomersPage() {
       }
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const customerData: any = {
       first_name: newCustomer.first_name,
       last_name: newCustomer.last_name,
@@ -212,6 +213,7 @@ export default function CustomersPage() {
       }
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updateData: any = {
       first_name: editingCustomer.first_name,
       last_name: editingCustomer.last_name,
@@ -332,9 +334,7 @@ export default function CustomersPage() {
     return `${customer.first_name} ${customer.last_name}`;
   };
 
-  const getFullAddress = (customer: Customer) => {
-    return `${customer.street_address}, ${customer.postal_code} ${customer.city}, ${customer.country}`;
-  };
+  // Removed unused getFullAddress function
 
   if (loading) {
     return (

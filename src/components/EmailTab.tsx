@@ -50,6 +50,7 @@ export default function EmailTab({ user, onMessage }: EmailTabProps) {
   // Load SMTP configuration
   useEffect(() => {
     loadSMTPConfiguration();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const loadSMTPConfiguration = async () => {

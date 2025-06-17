@@ -53,9 +53,10 @@ interface DocumentData {
 interface PDFWrapperProps {
   documentData: DocumentData;
   fileName: string;
+  isPreview?: boolean; // Add preview mode flag
 }
 
-const PDFWrapper: React.FC<PDFWrapperProps> = ({ documentData, fileName }) => {
+const PDFWrapper: React.FC<PDFWrapperProps> = ({ documentData, fileName, isPreview = false }) => {
   const documentRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = React.useState(false);
 
@@ -114,30 +115,40 @@ const PDFWrapper: React.FC<PDFWrapperProps> = ({ documentData, fileName }) => {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Download Button */}
-      <div className="p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <button
-          onClick={downloadPDF}
-          disabled={isGenerating}
-          className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center space-x-2"
-        >
-          {isGenerating ? (
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-          ) : (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          )}
-          <span>{isGenerating ? 'Generating...' : 'Download PDF'}</span>
-        </button>
-      </div>
+      {/* Download Button - Only show when not in preview mode */}
+      {!isPreview && (
+        <div className="p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+          <button
+            onClick={downloadPDF}
+            disabled={isGenerating}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center space-x-2"
+          >
+            {isGenerating ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            )}
+            <span>{isGenerating ? 'Generating...' : 'Download PDF'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Document Preview */}
-      <div className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-900 p-8">
+      <div className={`flex-1 bg-gray-100 dark:bg-gray-900 ${isPreview ? 'p-2 overflow-auto flex justify-center items-start' : 'p-8 overflow-auto'}`}>
         <div 
           ref={documentRef}
-          className="max-w-4xl mx-auto bg-white shadow-lg"
-          style={{ minHeight: '297mm', width: '210mm' }}
+          className={`bg-white shadow-lg ${
+            isPreview 
+              ? 'transform origin-top scale-[0.75] flex-shrink-0' 
+              : 'max-w-4xl mx-auto'
+          }`}
+          style={
+            isPreview 
+              ? { width: '210mm', height: '297mm', minHeight: '297mm' }
+              : { minHeight: '297mm', width: '210mm' }
+          }
         >
           {/* Document Content */}
           <div className="p-12">

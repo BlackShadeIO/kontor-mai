@@ -248,8 +248,8 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
 
 // Helper functions for common operations
 export const withErrorHandling = async <T>(
-  operation: () => Promise<{ data: T | null; error: any }>
-): Promise<{ data: T | null; error: any; success: boolean }> => {
+  operation: () => Promise<{ data: T | null; error: unknown }>
+): Promise<{ data: T | null; error: unknown; success: boolean }> => {
   try {
     const result = await operation();
     return {

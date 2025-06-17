@@ -181,7 +181,7 @@ export default function OfferForm() {
         throw new Error(errorData.error || 'Failed to send offer');
       }
 
-      const result = await response.json();
+      // const result = await response.json();
       alert('Offer sent successfully!');
     } catch (error) {
       console.error('Error sending offer:', error);

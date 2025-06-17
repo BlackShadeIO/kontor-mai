@@ -75,8 +75,8 @@ export default function CasesPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [cases, setCases] = useState<Case[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  // const [projects, setProjects] = useState<Project[]>([]);
+  // const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
   // Enhanced features state
@@ -87,7 +87,12 @@ export default function CasesPage() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
   const [casesPerPage] = useState(10);
-  const [analytics, setAnalytics] = useState<any>(null);
+  const [analytics, setAnalytics] = useState<{
+    total: number;
+    byType: { offers: number; invoices: number };
+    byStatus: { paid: number };
+    revenue: { total: number };
+  } | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -95,37 +100,38 @@ export default function CasesPage() {
     }
   }, [user, loading, router]);
 
-  const fetchProjects = async () => {
-    if (!user) return;
-    
-    const { data, error } = await supabase
-      .from('projects')
-      .select('id, name, description, status')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+  // Commented out unused fetch functions
+  // const fetchProjects = async () => {
+  //   if (!user) return;
+  //   
+  //   const { data, error } = await supabase
+  //     .from('projects')
+  //     .select('id, name, description, status')
+  //     .eq('user_id', user.id)
+  //     .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching projects:', error);
-    } else {
-      setProjects(data || []);
-    }
-  };
+  //   if (error) {
+  //     console.error('Error fetching projects:', error);
+  //   } else {
+  //     setProjects(data || []);
+  //   }
+  // };
 
-  const fetchCustomers = async () => {
-    if (!user) return;
-    
-    const { data, error } = await supabase
-      .from('customers')
-      .select('id, first_name, last_name, email, phone, company_name, street_address, city, postal_code, country')
-      .eq('user_id', user.id)
-      .order('first_name', { ascending: true });
+  // const fetchCustomers = async () => {
+  //   if (!user) return;
+  //   
+  //   const { data, error } = await supabase
+  //     .from('customers')
+  //     .select('id, first_name, last_name, email, phone, company_name, street_address, city, postal_code, country')
+  //     .eq('user_id', user.id)
+  //     .order('first_name', { ascending: true });
 
-    if (error) {
-      console.error('Error fetching customers:', error);
-    } else {
-      setCustomers(data || []);
-    }
-  };
+  //   if (error) {
+  //     console.error('Error fetching customers:', error);
+  //   } else {
+  //     setCustomers(data || []);
+  //   }
+  // };
 
   const fetchCases = async () => {
     if (!user) return;
@@ -143,7 +149,7 @@ export default function CasesPage() {
   const fetchAnalytics = async () => {
     if (!user) return;
     
-    const { data, error, success } = await caseOperations.getCaseAnalytics(user.id);
+    const { data, success } = await caseOperations.getCaseAnalytics(user.id);
     
     if (success && data) {
       setAnalytics(data);
@@ -152,8 +158,8 @@ export default function CasesPage() {
 
   useEffect(() => {
     if (user) {
-      fetchProjects();
-      fetchCustomers();
+      // fetchProjects();
+      // fetchCustomers();
       fetchCases();
       fetchAnalytics();
     }
@@ -169,7 +175,7 @@ export default function CasesPage() {
       console.error('Error updating case:', error);
     } else {
       setCases(cases.map(c => 
-        c.id === caseId ? { ...c, status: status as any } : c
+        c.id === caseId ? { ...c, status: status as 'draft' | 'sent' | 'accepted' | 'paid' | 'rejected' | 'cancelled' | 'overdue' } : c
       ));
       fetchAnalytics(); // Refresh analytics
     }
@@ -195,15 +201,15 @@ export default function CasesPage() {
     return 'Unknown Customer';
   };
 
-  const getCustomerAddress = (case_: Case) => {
-    if (case_.service_address) {
-      return case_.service_address;
-    }
-    if (case_.customers) {
-      return `${case_.customers.street_address}, ${case_.customers.postal_code} ${case_.customers.city}`;
-    }
-    return 'No address';
-  };
+  // const getCustomerAddress = (case_: Case) => {
+  //   if (case_.service_address) {
+  //     return case_.service_address;
+  //   }
+  //   if (case_.customers) {
+  //     return `${case_.customers.street_address}, ${case_.customers.postal_code} ${case_.customers.city}`;
+  //   }
+  //   return 'No address';
+  // };
 
   // Enhanced filtering and sorting
   const filteredAndSortedCases = cases
@@ -392,7 +398,7 @@ export default function CasesPage() {
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Sort By</label>
                   <select
                     value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as any)}
+                    onChange={(e) => setSortBy(e.target.value as 'created_at' | 'due_date' | 'priority' | 'status')}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   >
                     <option value="created_at">Created Date</option>
@@ -406,7 +412,7 @@ export default function CasesPage() {
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Order</label>
                   <select
                     value={sortOrder}
-                    onChange={(e) => setSortOrder(e.target.value as any)}
+                    onChange={(e) => setSortOrder(e.target.value as 'asc' | 'desc')}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   >
                     <option value="desc">Descending</option>

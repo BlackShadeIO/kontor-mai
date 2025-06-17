@@ -469,7 +469,7 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
 
         if (!success || error || !createdCase) {
           console.error('Error creating case:', error);
-          alert(`Error creating document: ${error?.message || 'Unknown error'}`);
+          alert(`Error creating document: ${(error as any)?.message || 'Unknown error'}`);
           return;
         }
 
@@ -816,6 +816,36 @@ export default function DocumentEditor({ caseId }: DocumentEditorProps) {
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                           />
                         </div>
+
+                        {formData.case_type === 'offer' && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                              Valid Until
+                            </label>
+                            <input
+                              type="date"
+                              value={formData.valid_until}
+                              onChange={(e) => setFormData({ ...formData, valid_until: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                          </div>
+                        )}
+
+                        {formData.case_type === 'invoice' && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                              Payment Terms (days)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={formData.payment_terms}
+                              onChange={(e) => setFormData({ ...formData, payment_terms: parseInt(e.target.value) || 30 })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

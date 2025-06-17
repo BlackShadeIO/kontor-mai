@@ -13,21 +13,7 @@ interface OfferItem {
   total: number;
 }
 
-interface OfferData {
-  offerNumber: string;
-  date: string;
-  validUntil: string;
-  clientName: string;
-  clientEmail: string;
-  clientAddress: string;
-  clientPhone: string;
-  items: OfferItem[];
-  notes: string;
-  terms: string;
-  subtotal: number;
-  tax: number;
-  total: number;
-}
+
 
 export async function POST(request: NextRequest) {
   try {
@@ -120,7 +106,7 @@ export async function POST(request: NextRequest) {
     
     if (offerData.clientAddress) {
       const addressLines = offerData.clientAddress.split('\n');
-      addressLines.forEach(line => {
+      addressLines.forEach((line: string) => {
         doc.text(line, margin, yPosition);
         yPosition += 6;
       });
@@ -142,7 +128,7 @@ export async function POST(request: NextRequest) {
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     
-    const tableStart = yPosition;
+
     const colWidths = [80, 20, 30, 30];
     const colPositions = [margin, margin + colWidths[0], margin + colWidths[0] + colWidths[1], margin + colWidths[0] + colWidths[1] + colWidths[2]];
 

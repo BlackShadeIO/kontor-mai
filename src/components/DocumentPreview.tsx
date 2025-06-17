@@ -73,7 +73,7 @@ export default function DocumentPreview({ documentData, isOpen, onClose, inline 
       <div className="h-full flex flex-col bg-white dark:bg-gray-800">
         {/* PDF Viewer */}
         <div className="flex-1 bg-gray-100 dark:bg-gray-900">
-          <PDFWrapper documentData={documentData} fileName={fileName} />
+          <PDFWrapper documentData={documentData} fileName={fileName} isPreview={inline} />
         </div>
       </div>
     );
@@ -112,7 +112,7 @@ export default function DocumentPreview({ documentData, isOpen, onClose, inline 
           
           {/* PDF Viewer */}
           <div className="flex-1 bg-gray-100 dark:bg-gray-900">
-            <PDFWrapper documentData={documentData} fileName={fileName} />
+            <PDFWrapper documentData={documentData} fileName={fileName} isPreview={false} />
           </div>
           
           {/* Footer */}
